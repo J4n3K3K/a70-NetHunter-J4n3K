@@ -1,0 +1,10 @@
+config RTL8188EUS
+	tristate "Realtek RTL8188EUS USB WiFi (aircrack-ng, monitor mode + injection)"
+	depends on USB && CFG80211
+	help
+	  aircrack-ng/rtl8188eus v5.3.9 driver for RTL8188EUS based USB
+	  adapters (e.g. TP-Link TL-WN722N v2/v3). Supports monitor mode and
+	  frame injection.
+
+	  It shares symbol names with the rtl8812au driver, so build it as a
+	  module (M) when CONFIG_88XXAU=y.
