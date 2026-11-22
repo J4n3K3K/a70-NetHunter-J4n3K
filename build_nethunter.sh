@@ -28,7 +28,10 @@ EXTRAS="arch/arm64/configs/nethunter-extras.config"
 CLANG_DIR="${CLANG_DIR:-$KDIR/toolchain/proton-clang}"
 AK3_DIR="${AK3_DIR:-$KDIR/toolchain/anykernel3}"
 JOBS="${JOBS:-$(nproc)}"
-OUT="$KDIR/out"
+OUT="${OUT:-$KDIR/out}"
+# Extra config fragments merged after nethunter-extras (space separated,
+# relative to the tree), e.g. linux-recovery/recovery.config
+EXTRA_FRAGMENTS="${EXTRA_FRAGMENTS:-}"
 
 msg() { printf '\n\e[1;93m[*] %s\e[0m\n' "$*"; }
 err() { printf '\n\e[1;31m[x] %s\e[0m\n' "$*" >&2; exit 1; }
@@ -60,12 +63,22 @@ MAKE=(make -C "$KDIR" O="$OUT" ARCH=arm64
 [ -x "$KDIR/tools/dtc" ] && MAKE+=(DTC_EXT="$KDIR/tools/dtc")
 
 gen_config() {
-    msg "Generating config: $BASE_DEFCONFIG + nethunter-extras.config"
+    local frags=("$KDIR/$EXTRAS") f
+    for f in $EXTRA_FRAGMENTS; do frags+=("$KDIR/$f"); done
+    msg "Generating config: $BASE_DEFCONFIG + ${frags[*]#$KDIR/}"
     mkdir -p "$OUT"
     "${MAKE[@]}" "$BASE_DEFCONFIG"
     KCONFIG_CONFIG="$OUT/.config" "$KDIR/scripts/kconfig/merge_config.sh" \
-        -m -O "$OUT" "$OUT/.config" "$KDIR/$EXTRAS"
+        -m -O "$OUT" "$OUT/.config" "${frags[@]}"
     "${MAKE[@]}" olddefconfig
+
+    # Expected values: last definition of each option across all fragments.
+    local want_file="$OUT/.nethunter-want"
+    cat "${frags[@]}" | awk '
+        /^CONFIG_[A-Za-z0-9_]+=/ { split($0, a, "="); o = a[1] }
+        /^# CONFIG_[A-Za-z0-9_]+ is not set/ { o = $2 }
+        o != "" { if (!(o in v)) ord[n++] = o; v[o] = $0; o = "" }
+        END { for (i = 0; i < n; i++) print v[ord[i]] }' > "$want_file"
 
     msg "Verifying requested options"
     local bad=0 line opt want got
@@ -85,7 +98,7 @@ gen_config() {
                 printf '  (absent) %-40s not in this tree\n' "$opt"
             fi
         fi
-    done < "$KDIR/$EXTRAS"
+    done < "$want_file"
     [ "$bad" = 0 ] || err "Some options did not apply (missing dependencies?)"
     printf '  all present options applied\n'
 }

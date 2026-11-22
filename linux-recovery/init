@@ -1,0 +1,165 @@
+#!/bin/busybox sh
+#
+# Linux-recovery init for Samsung Galaxy A70 (a70q)
+#
+# Boots a regular GNU/Linux rootfs from the RECOVERY partition, Android stays
+# on BOOT (dual boot: "reboot recovery" -> Linux, "reboot -f" -> Android).
+#
+# Root search order (first hit wins):
+#   1. linux.root=<dev>         explicit block device on the kernel cmdline
+#   2. /data/linux.img          image file on userdata (linux.img=<path>)
+#   3. microSD/USB partition    with filesystem label LINUX (linux.label=)
+#   4. rescue shell             over USB: serial /dev/ttyACM0 on the PC and
+#                               telnet 172.16.42.1 (USB Ethernet, ECM)
+#
+# The SDE display has no working fbdev on this kernel, so there is no text
+# console on the panel; progress goes to the kernel log and the USB shell.
+#
+
+/bin/busybox mkdir -p /bin /sbin /usr/bin /usr/sbin
+/bin/busybox --install -s
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mkdir -p /proc /sys /dev /data /new_root /tmp /run
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /run
+
+log() { echo "linux-recovery: $*" > /dev/kmsg; echo "linux-recovery: $*"; }
+
+# Knox/Samsung watchdog reboots the phone on "hung" tasks during long fsck/IO.
+echo 0 > /proc/sys/kernel/hung_task_timeout_secs 2>/dev/null
+
+# ---- kernel cmdline --------------------------------------------------------
+ROOT=""; IMG="/linux.img"; LABEL="LINUX"; INIT="/sbin/init"; SHELL_ONLY=0
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        linux.root=*)  ROOT="${arg#linux.root=}" ;;
+        linux.img=*)   IMG="${arg#linux.img=}" ;;
+        linux.label=*) LABEL="${arg#linux.label=}" ;;
+        linux.init=*)  INIT="${arg#linux.init=}" ;;
+        linux.shell=1) SHELL_ONLY=1 ;;
+    esac
+done
+
+# ---- USB gadget: ACM serial + ECM ethernet ---------------------------------
+usb_up() {
+    [ -d /sys/kernel/config/usb_gadget ] || mount -t configfs configfs /sys/kernel/config 2>/dev/null
+    G=/sys/kernel/config/usb_gadget/lr
+    [ -d "$G" ] && return 0
+    mkdir -p "$G" || return 1
+    echo 0x1d6b > "$G/idVendor"; echo 0x0104 > "$G/idProduct"
+    mkdir -p "$G/strings/0x409"
+    echo "Samsung"                 > "$G/strings/0x409/manufacturer"
+    echo "Galaxy A70 Linux-recovery" > "$G/strings/0x409/product"
+    echo "a70q-linux"              > "$G/strings/0x409/serialnumber"
+    mkdir -p "$G/configs/c.1/strings/0x409"
+    echo "ACM+ECM" > "$G/configs/c.1/strings/0x409/configuration"
+    mkdir -p "$G/functions/acm.usb0" "$G/functions/ecm.usb0"
+    ln -s "$G/functions/acm.usb0" "$G/configs/c.1/" 2>/dev/null
+    ln -s "$G/functions/ecm.usb0" "$G/configs/c.1/" 2>/dev/null
+    UDC="$(ls /sys/class/udc 2>/dev/null | head -n1)"
+    [ -n "$UDC" ] && echo "$UDC" > "$G/UDC"
+    sleep 1
+    IF="$(cat "$G/functions/ecm.usb0/ifname" 2>/dev/null)"; IF="${IF:-usb0}"
+    ifconfig "$IF" 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null
+    cat > /run/udhcpd.conf <<EOF
+start 172.16.42.2
+end 172.16.42.2
+interface $IF
+option subnet 255.255.255.0
+max_leases 1
+lease_file /run/udhcpd.leases
+EOF
+    touch /run/udhcpd.leases
+    udhcpd /run/udhcpd.conf 2>/dev/null
+}
+
+rescue_shell() {
+    log "$1"
+    log "rescue shell: telnet 172.16.42.1  |  serial /dev/ttyACM0 on the PC"
+    log "boot Android: reboot -f"
+    usb_up
+    telnetd -l /bin/sh -b 172.16.42.1:23 2>/dev/null
+    while true; do
+        [ -c /dev/ttyGS0 ] && setsid sh -c 'exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1'
+        sleep 2
+    done
+}
+
+# ---- helpers ----------------------------------------------------------------
+part_by_name() {   # PARTNAME from GPT -> /dev/<node>
+    for u in /sys/class/block/*/uevent; do
+        if grep -qx "PARTNAME=$1" "$u" 2>/dev/null; then
+            echo "/dev/$(sed -n 's/^DEVNAME=//p' "$u")"; return 0
+        fi
+    done
+    return 1
+}
+
+mount_any() {      # dev dir [opts]
+    for fs in ext4 f2fs btrfs xfs vfat; do
+        mount -t "$fs" -o "${3:-rw}" "$1" "$2" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+wait_for() {       # seconds command...
+    t="$1"; shift
+    while [ "$t" -gt 0 ]; do "$@" && return 0; sleep 1; t=$((t - 1)); done
+    return 1
+}
+
+[ "$SHELL_ONLY" = 1 ] && rescue_shell "linux.shell=1 requested"
+
+# ---- 1. explicit root ---------------------------------------------------------
+if [ -n "$ROOT" ]; then
+    case "$ROOT" in
+        LABEL=*|UUID=*) ROOT="$(wait_for 10 findfs "$ROOT")" ;;
+    esac
+    wait_for 10 test -b "$ROOT" && mount_any "$ROOT" /new_root && log "root: $ROOT"
+fi
+
+# ---- 2. /data/linux.img -------------------------------------------------------
+if ! mountpoint -q /new_root; then
+    DATA="$(wait_for 10 part_by_name userdata)"
+    if [ -n "$DATA" ] && mount_any "$DATA" /data "rw,noatime"; then
+        if [ -f "/data$IMG" ]; then
+            LOOP="$(losetup -f)"
+            losetup "$LOOP" "/data$IMG" && mount_any "$LOOP" /new_root "rw,noatime" \
+                && log "root: /data$IMG via $LOOP"
+        else
+            log "no /data$IMG"
+        fi
+    else
+        log "userdata not found or not mountable"
+    fi
+fi
+
+# ---- 3. partition labelled LINUX (microSD / USB) -----------------------------
+if ! mountpoint -q /new_root; then
+    DEV="$(wait_for 15 findfs "LABEL=$LABEL")"
+    [ -n "$DEV" ] && mount_any "$DEV" /new_root "rw,noatime" && log "root: $DEV (LABEL=$LABEL)"
+fi
+
+mountpoint -q /new_root || rescue_shell "no Linux root found"
+[ -x "/new_root$INIT" ] || [ -L "/new_root$INIT" ] || rescue_shell "root mounted, but $INIT is missing"
+
+# Keep Android's userdata reachable from Linux (read/write, be careful).
+if mountpoint -q /data; then
+    mkdir -p /new_root/mnt/android-data 2>/dev/null
+    mount --move /data /new_root/mnt/android-data 2>/dev/null
+fi
+
+log "switching root to $INIT"
+for m in /dev/pts /dev /proc /sys /run; do
+    mkdir -p "/new_root$m" 2>/dev/null
+done
+umount /dev/pts 2>/dev/null
+mount --move /dev  /new_root/dev
+mount --move /proc /new_root/proc
+mount --move /sys  /new_root/sys
+mount --move /run  /new_root/run
+exec switch_root /new_root "$INIT"

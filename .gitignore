@@ -133,3 +133,4 @@ Android.bp
 # NetHunter build
 /out/
 /toolchain/
+/out-recovery/
