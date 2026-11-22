@@ -1,0 +1,41 @@
+name: Build NetHunter kernel (a70q)
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - '**.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential libssl-dev libelf-dev \
+            cpio kmod lz4 python3 zip
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: toolchain/proton-clang
+          key: proton-clang-v1
+
+      - name: Build kernel + AnyKernel3 zip
+        run: ./build_nethunter.sh all
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetHunter-a70q-${{ github.ref_name }}-${{ github.run_number }}
+          path: |
+            out/*.zip
+            out/*.config
+          if-no-files-found: error
