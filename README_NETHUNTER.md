@@ -113,3 +113,9 @@ slcand -o -c -s6 /dev/ttyUSB0 slcan0 && ip link set up slcan0
 # CANable (gs_usb):
 ip link set can0 type can bitrate 500000 && ip link set up can0
 ```
+
+## Linux-recovery (dual boot z Linuksem)
+
+Zwykły Linux (Kali, Debian, Arch, ...) uruchamiany z partycji RECOVERY, z
+`/data/linux.img` albo z partycji `LINUX` na microSD, tak jak `Linux11.img` na A51.
+Budowanie: `./build_linux_recovery.sh`. Szczegóły w [linux-recovery/README.md](linux-recovery/README.md).
