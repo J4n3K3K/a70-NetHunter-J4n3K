@@ -56,6 +56,21 @@ SysV IPC, POSIX mqueue, namespaces (UTS/IPC/PID/NET), binfmt_misc
 USB storage i UAS. Adaptery Ethernet USB: AX88179/AX8817x, RTL8152/8153,
 RTL8150, CDC Ether/EEM/NCM, RNDIS host, SMSC, DM9601, LAN78xx, iPhone (ipheth).
 
+### zram (pamięć wirtualna w RAM)
+`ZRAM` i `ZSMALLOC` są wbudowane. Domyślny kompresor to **LZ4**, najszybszy
+(`CRYPTO_LZ4=y` sprawia, że `zram_drv.c` wybiera `lz4`). Do wyboru są też
+`lz4hc`, `zstd` (lepsza kompresja, wolniejszy), `lzo` i `lzo-rle`.
+
+```bash
+cat /sys/block/zram0/comp_algorithm      # [lz4] jest wybrany
+# Ręczna zmiana (np. na 3 GB zram), jako root:
+swapoff /dev/block/zram0
+echo 1 > /sys/block/zram0/reset
+echo lz4 > /sys/block/zram0/comp_algorithm
+echo 3G  > /sys/block/zram0/disksize
+mkswap /dev/block/zram0 && swapon /dev/block/zram0
+```
+
 ### Ładowanie modułów na Samsungu
 Samsung ma w kernelu `CONFIG_UH_LKM_BLOCK=y`, które **bezwarunkowo odrzuca każdy
 moduł `.ko`**. Dlatego moduły od NetHuntera nie ładowały się na bazowym kernelu.
