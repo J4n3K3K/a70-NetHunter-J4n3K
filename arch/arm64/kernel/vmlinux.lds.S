@@ -252,13 +252,19 @@ SECTIONS
 	__pecoff_data_size = ABSOLUTE(. - __initdata_begin);
 	_end = .;
 
-	STABS_DEBUG
-
-	HEAD_SYMBOLS
-
+	/*
+	 * Samsung RTIC data must directly follow _end. Older BFD ld kept the
+	 * location counter at _end across STABS_DEBUG; newer binutils/lld do
+	 * not, which put .bss.rtic near address 0 and broke ADRP relocations
+	 * ("relocation truncated to fit ... against .bss.rtic").
+	 */
 	.bss : {			/* bss segment		*/
          RTIC_BSS
 	}
+
+	STABS_DEBUG
+
+	HEAD_SYMBOLS
 }
 
 /*
