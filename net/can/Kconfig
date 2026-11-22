@@ -51,6 +51,19 @@ config CAN_GW
 	  They can be modified with AND/OR/XOR/SET operations as configured
 	  by the netlink configuration interface known e.g. from iptables.
 
+config CAN_ISOTP
+	tristate "ISO 15765-2:2016 CAN transport protocol"
+	default y
+	help
+	  CAN Transport Protocols offer support for segmented Point-to-Point
+	  communication between CAN nodes via two defined CAN Identifiers.
+	  This protocol is used e.g. for car diagnosis (UDS / ISO 14229 and
+	  OBD-II) and is needed by NetHunter CARsenal (isotpsend, isotprecv,
+	  isotpdump, isotptun, UDS scanners).
+
+	  Backport of the out-of-tree module from
+	  https://github.com/hartkopp/can-isotp (2022-05-20).
+
 source "drivers/net/can/Kconfig"
 
 endif
